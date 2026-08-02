@@ -107,7 +107,11 @@ metadata:
   labels:
     app: atenet-router
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: atenet-router
@@ -120,6 +124,13 @@ spec:
         prometheus.io/port: "9090"
     spec:
       serviceAccountName: atenet-router
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: atenet-router
       containers:
       - name: atenet-router
         image: ko://github.com/agent-substrate/substrate/cmd/atenet
@@ -182,6 +193,11 @@ spec:
         # Trust bundle used to verify ateapi's servicedns serving cert.
         - name: "servicedns-ca"
           mountPath: "/run/servicedns-ca"
+        # Keep ext_proc alive while the draining envoy still receives traffic.
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 5
       - name: envoy
         image: envoyproxy/envoy:v1.30-latest
         command:
@@ -197,6 +213,15 @@ spec:
           containerPort: 8443
         - name: admin
           containerPort: 9901
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9901
+          periodSeconds: 5
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 5
         volumeMounts:
         - name: envoy-config
           mountPath: /etc/envoy
@@ -267,3 +292,14 @@ spec:
     port: 4040
     targetPort: status
     protocol: TCP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: atenet-router
+  namespace: ate-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: atenet-router
