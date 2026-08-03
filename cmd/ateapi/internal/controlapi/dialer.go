@@ -28,7 +28,9 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/lru"
@@ -96,8 +98,10 @@ func (d *AteletDialer) DialForWorker(workerPodNamespace, workerPodName string) (
 		return nil, fmt.Errorf("while finding atelet for worker pod %q on node %q: %w", workerPodKey, selectedWorker.Spec.NodeName, err)
 	}
 
+	// Atelet churn self-heals in seconds; Unavailable lets the router park
+	// and retry instead of failing fast.
 	if len(matchingAtelets) != 1 {
-		return nil, fmt.Errorf("found %d atelet pods on node %q, expected 1", len(matchingAtelets), selectedWorker.Spec.NodeName)
+		return nil, status.Errorf(codes.Unavailable, "found %d atelet pods on node %q, expected 1", len(matchingAtelets), selectedWorker.Spec.NodeName)
 	}
 
 	selectedAtelet := matchingAtelets[0].(*corev1.Pod)
@@ -109,7 +113,7 @@ func (d *AteletDialer) DialForWorker(workerPodNamespace, workerPodName string) (
 	}
 
 	if len(selectedAtelet.Status.PodIPs) == 0 {
-		return nil, fmt.Errorf("selected atelet %q has no assigned IPs", selectedAtelet.ObjectMeta.Namespace+"/"+selectedAtelet.ObjectMeta.Name)
+		return nil, status.Errorf(codes.Unavailable, "selected atelet %q has no assigned IPs", selectedAtelet.ObjectMeta.Namespace+"/"+selectedAtelet.ObjectMeta.Name)
 	}
 
 	creds, err := d.dialCredentials(string(selectedAtelet.ObjectMeta.UID))

@@ -80,25 +80,34 @@ func addRoutingMutations(dst, actorHost string, routeViaAuthority bool, mut *ext
 }
 
 func immediateResponse(statusCode envoy_type.StatusCode, message string) *extproc.ProcessingResponse {
+	headers := []*corev3.HeaderValueOption{
+		{
+			// Using RawValues instead of Value: newer versions of Envoy
+			// drop Value and use RawValue
+			Header: &corev3.HeaderValue{
+				Key:      "content-type",
+				RawValue: []byte("text/plain"),
+			},
+		},
+	}
+	if statusCode == envoy_type.StatusCode_ServiceUnavailable {
+		// 503s here are transient (atelet churn, park budget spent); tell
+		// clients to retry shortly rather than back off.
+		headers = append(headers, &corev3.HeaderValueOption{
+			Header: &corev3.HeaderValue{
+				Key:      "retry-after",
+				RawValue: []byte("1"),
+			},
+		})
+	}
 	return &extproc.ProcessingResponse{
 		Response: &extproc.ProcessingResponse_ImmediateResponse{
 			ImmediateResponse: &extproc.ImmediateResponse{
 				Status: &envoy_type.HttpStatus{
 					Code: statusCode,
 				},
-				Body: []byte(message),
-				Headers: &extproc.HeaderMutation{
-					SetHeaders: []*corev3.HeaderValueOption{
-						{
-							// Using RawValues instead of Value: newer versions of Envoy
-							// drop Value and use RawValue
-							Header: &corev3.HeaderValue{
-								Key:      "content-type",
-								RawValue: []byte("text/plain"),
-							},
-						},
-					},
-				},
+				Body:    []byte(message),
+				Headers: &extproc.HeaderMutation{SetHeaders: headers},
 			},
 		},
 	}
